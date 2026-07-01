@@ -9,20 +9,18 @@ Traditional Contact Center AI implementations rely on rigid intent matching and 
 This implementation showcases the transition to an autonomous GECX agent architecture:
 
 * **Dynamic Reasoning vs. Rigid Rules:** Replaces Dialogflow's static training phrases with LLM reasoning to handle compound requests and execute tools dynamically.
-* **Grounding and RAG Integration:** Grounds agent replies in enterprise knowledge base articles to eliminate hallucinations.
+* **Grounding and RAG Integration:** Grounds agent replies in enterprise knowledge base articles via Google Cloud Vertex AI Search to eliminate hallucinations while maintaining strict CCaaS timeout SLAs.
 * **Side-by-Side Migration Benchmarker:** Runs customer queries against both Dialogflow and GECX to prove accuracy gains and migration feasibility.
-* **Enterprise Observability:** Emulates CCAI Insights sentiment scoring and emits structured JSON logs for Google Cloud Logging.
+* **Enterprise Observability:** Emulates CCAI Insights sentiment scoring and emits non-blocking structured JSON logs directly to Google Cloud Logging.
 
-## POC Simplifications and Production Roadmap
+## Application Execution Modes
 
-To keep this project lightweight, portable, and easy for technical evaluators to verify without requiring GCP IAM provisioning or active cloud billing, several components use simplified implementations. Below is how these map to a live enterprise production deployment on Google Cloud:
+The platform uses Dependency Inversion to support two operational modes:
 
-* **Knowledge Base (RAG):** Implemented in memory for instant local execution. In production, this replaces the `IKnowledgeProvider` interface with Google Cloud Vertex AI Search or vector search indices.
-* **Telephony and CCaaS Integration:** Exposed via clean REST API endpoints (`POST /chat`). In a live environment, this connects to telephony bridges (Genesys Cloud CX, Avaya) or Google Cloud Audio Connector using web sockets and the Gemini Multimodal Live API.
-* **Session Storage:** Managed via Python server state. In production, conversation history persists across multi-region clusters using Cloud Spanner or Memorystore for Redis.
-* **Infrastructure:** Runs on local FastAPI and Uvicorn. Enterprise deployment provisions containerized Cloud Run or GKE services orchestrated via Terraform and Cloud Build CI/CD pipelines.
+1. **Local Mock Mode:** Runs completely offline in memory without requiring cloud billing or active credentials.
+2. **Real GCP Production Mode:** Connects to live Google Cloud Platform services including Vertex AI Search (Discovery Engine), Vertex AI Gemini, and Cloud Logging.
 
-## How to Run the Application
+## How to Run the Application Locally (Offline Mode)
 
 1. Activate your Python virtual environment and install dependencies:
 ```bash
@@ -31,33 +29,75 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Run the automated test suite to verify all backend services:
+2. Run the automated test suite across all 23 unit and integration tests:
 ```bash
-PYTHONPATH=. rtk pytest -v
+./.venv/bin/pytest -v
 ```
 
-3. Start the API server locally:
+3. Start the API server in local fallback mode:
+```bash
+export USE_REAL_GCP="false"
+PYTHONPATH=. uvicorn api.main:app --reload --port 8000
+```
+
+## How to Configure and Run with Real Google Cloud Services
+
+To verify the live cloud integrations, you need an active Google Cloud project with Vertex AI and Discovery Engine APIs enabled.
+
+### Step 1: GCP Authentication and API Enablement
+
+Authenticate your terminal session using Application Default Credentials (ADC):
+```bash
+gcloud auth application-default login
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+```
+
+Enable the required Google Cloud APIs:
+```bash
+gcloud services enable aiplatform.googleapis.com \
+                       discoveryengine.googleapis.com \
+                       logging.googleapis.com
+```
+
+Ensure your IAM user or service account has the following roles:
+* `roles/discoveryengine.viewer` (for searching RAG data stores)
+* `roles/aiplatform.user` (for generating answers via Vertex AI Gemini)
+* `roles/logging.logWriter` (for writing asynchronous logs to Cloud Logging)
+
+### Step 2: Configure Environment Variables
+
+Export the required configuration variables pointing to your GCP infrastructure:
+```bash
+export USE_REAL_GCP="true"
+export GCP_PROJECT_ID="your-gcp-project-id"
+export GCP_LOCATION="us-central1"
+export GCP_DATA_STORE_ID="your-discovery-engine-data-store-id"
+export GCP_RAG_TIMEOUT_SECONDS="4.0"
+export GCP_GEMINI_MODEL="gemini-1.5-flash-002"
+```
+
+### Step 3: Start the Connected Application Server
+
+Launch the server with live GCP dependencies wired via the startup lifespan:
 ```bash
 PYTHONPATH=. uvicorn api.main:app --reload --port 8000
 ```
 
 ## Manual Testing and Dialogflow vs. GECX Comparison
 
-Once the server is running on port 8000, you can execute a manual comparison test to observe the differences between legacy Dialogflow intent handling and modern GECX agent reasoning.
-
-You can run this test directly from your terminal using cURL or by navigating to `http://localhost:8000/docs` in your browser.
+Once the application is running on port 8000 (either in local mode or connected to live GCP services), you can execute manual benchmark comparisons or interactive chat turns. For detailed step-by-step UI testing, refer to the [MANUAL_TESTING_GUIDE.md](file:///Users/admin/Projects/TechnicalTests/EMEA_GECX/MANUAL_TESTING_GUIDE.md).
 
 ### Step 1: Run the Side-by-Side Benchmark
 
-Execute the benchmark endpoint to simulate realistic customer utterances across both engines simultaneously:
+Execute the benchmark endpoint from your terminal to simulate realistic customer utterances across both engines simultaneously:
 
 ```bash
 curl -X POST "http://localhost:8000/simulate/benchmark" -H "Content-Type: application/json"
 ```
 
-### Step 2: Analyzing the Output
+### Step 2: Analyzing the Benchmark Output
 
-The response returns a detailed comparison across multiple customer support scenarios:
+The response returns a structured comparison across multiple customer support scenarios:
 
 1. **Simple Intent (TC-01):**
    * Utterance: "Check my billing invoice status"
@@ -71,12 +111,12 @@ The response returns a detailed comparison across multiple customer support scen
 
 ### Step 3: Test Interactive Conversational Turns
 
-To interact directly with the GECX agent and inspect CCAI Insights analytics, send a message to the chat endpoint:
+To interact directly with the GECX agent and inspect real-time tool executions and CCAI Insights analytics, send a request to the chat endpoint:
 
 ```bash
 curl -X POST "http://localhost:8000/chat" \
      -H "Content-Type: application/json" \
-     -d '{"session_id": "TEST-01", "user_message": "My router has a blinking red light and speed is slow."}'
+     -d '{"session_id": "TEST-GCP-01", "user_message": "My router has a blinking red light and speed is slow."}'
 ```
 
-The response returns the grounded agent reply, the list of CRM tools invoked automatically (`run_network_diagnostic`), and real-time CCAI Insights metrics including sentiment score and topic classification.
+When running with `USE_REAL_GCP="true"`, the server will retrieve grounding articles directly from your Discovery Engine data store, generate responses via Vertex AI Gemini, and emit non-blocking structured telemetry events directly into Google Cloud Logging.
