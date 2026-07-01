@@ -5,17 +5,25 @@ from fastapi import FastAPI, Request
 from api.models import ChatRequest, ChatResponse, TurnInsight
 from services.knowledge.in_memory_repository import InMemoryKnowledgeRepository
 from services.agent.gecx_agent_service import GECXAgentService
+from services.knowledge.vertex_ai_repository import VertexAISearchRepository
+from services.telemetry.gcp_logger import setup_gcp_telemetry
 
 logger = logging.getLogger("gecx.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup dependency injection
-    knowledge_repo = InMemoryKnowledgeRepository()
+    import os
+    use_gcp = os.getenv("USE_REAL_GCP", "").lower() in ("true", "1", "yes")
+    if use_gcp:
+        setup_gcp_telemetry()
+        knowledge_repo = VertexAISearchRepository()
+    else:
+        knowledge_repo = InMemoryKnowledgeRepository()
+    
     agent_svc = GECXAgentService(knowledge_provider=knowledge_repo)
     app.state.knowledge_provider = knowledge_repo
     app.state.agent_service = agent_svc
-    logger.info(json.dumps({"event": "startup", "status": "Dependencies initialized"}))
+    logger.info(json.dumps({"event": "startup", "status": "Dependencies initialized", "use_real_gcp": use_gcp}))
     yield
     logger.info(json.dumps({"event": "shutdown"}))
 

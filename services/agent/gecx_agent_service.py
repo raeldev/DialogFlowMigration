@@ -25,9 +25,18 @@ class GECXAgentService(IAgentProvider):
     def __init__(self, knowledge_provider: IKnowledgeProvider, llm_client: Any = None):
         self.knowledge_provider = knowledge_provider
         self.sessions: Dict[str, List[Dict[str, Any]]] = {}
-        self.model_name = "gemini-2.5-flash"
+        use_gcp = os.getenv("USE_REAL_GCP", "").lower() in ("true", "1", "yes")
+        self.model_name = os.getenv("GCP_GEMINI_MODEL", "gemini-1.5-flash-002") if use_gcp else "gemini-2.5-flash"
         if llm_client:
             self.client = llm_client
+        elif use_gcp:
+            project_id = os.getenv("GCP_PROJECT_ID")
+            location = os.getenv("GCP_LOCATION", "us-central1")
+            try:
+                self.client = genai.Client(vertexai=True, project=project_id, location=location)
+            except Exception as e:
+                logger.warning(f"Could not initialize genai.Client in Vertex AI mode: {e}")
+                self.client = None
         else:
             api_key = os.getenv("GEMINI_API_KEY", "mock_key_for_testing")
             try:
